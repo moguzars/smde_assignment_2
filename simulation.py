@@ -1,12 +1,12 @@
 import simpy
 import pandas as pd
+import numpy as np
 import random
 from datetime import datetime, timedelta
 
 # -------------------- Configuration --------------------
 UNIT_SALE_PRICE = 100
 DELIVERY_INTERVAL = 1
-TRANSPORT_COST_PER_DELIVERY = 1
 SIM_DAYS = 60
 STORAGE_COST_PER_UNIT_PER_DAY = 1
 
@@ -17,6 +17,29 @@ STORAGE_TIERS = {
     "large":  {"capacity": 400, "monthly_rent": 2000},
 }
 
+
+
+# Distances from distribution center (DC) for each store
+num_elements = 45
+min_km = 10
+max_km = 500
+mean = (min_km + max_km) / 2
+std_dev = (max_km - min_km) / 6
+raw_distances = np.random.normal(loc=mean, scale=std_dev, size=num_elements)
+clipped_distances = np.clip(raw_distances, min_km, max_km)
+
+DELIVERY_QUANTITY = 10000
+INITIAL_INVENTORY = 10000 # Average weekly sales overall
+TRANSPORT_COST_PER_DELIVERY = 100
+START_DATE = datetime.strptime("2012-09-14", "%Y-%m-%d").date()
+NUM_TRUCKS = 2
+DELIVERY_TIME_MEAN = 1.5
+DELIVERY_TIME_STD = 0.3
+REORDER_POINT = 5000
+TRANSPORT_COST_PER_DELIVERY_BASE = 100
+TRANSPORT_COST_PER_UNIT_LOAD = 0.01
+TRANSPORT_COST_PER_KM = 0.5
+DELIVERY_CHECK_INTERVAL = 1
 # -------------------- Load Sales Data --------------------
 sales_df = pd.read_csv("Walmart_Sales.csv")
 sales_df["Date"] = pd.to_datetime(sales_df["Date"], format="%d-%m-%Y")
@@ -39,6 +62,14 @@ arrival_lookup = {
     (row["Store"], row["Date"].date()): row["Arrival_Interval"]
     for _, row in sales_df.iterrows()
 }
+
+
+STORE_DISTANCES_FROM_DC = {
+    store_id: dist
+    for store_id, dist in zip(sales_df["Store"].unique(), clipped_distances.tolist())
+}
+AVG_FUEL_PRICE = sales_df["Fuel_Price"].mean()
+
 
 # -------------------- Store Class --------------------
 class Store:
@@ -95,18 +126,65 @@ class Store:
                 self.lost_profit += UNIT_SALE_PRICE
 
 # -------------------- Delivery Process --------------------
-def delivery(env, stores):
-    while True:
-        yield env.timeout(DELIVERY_INTERVAL)
-        for store in stores:
-            store.inventory = store.capacity
-            store.total_transport_cost += TRANSPORT_COST_PER_DELIVERY
+class DistributionCenter:
+    def __init__(self, env, stores, trucks, distances=STORE_DISTANCES_FROM_DC):
+        self.env = env
+        self.stores = stores
+        self.trucks = trucks
+        self.distances = distances
+        self.total_transport_cost = 0
+        self.action = env.process(self.periodic_check_and_order())
+        
+    def check_if_stock_below_reorder_point(self, store):
+        return store.inventory < REORDER_POINT
+
+    def _execute_delivery(self, store):
+        # print(f"[{self.env.now:.2f}]: DC is preparing an order for {store.name} (Inv: {store.inventory}). Requesting truck...")
+        
+        with self.trucks.request() as request:
+            yield request # Wait until a truck is available
+            
+            print(f"[{self.env.now:.2f}]: Truck acquired for {store.name}. Beginning delivery...")
+
+            # Calculate actual delivery time (one way)
+            delivery_travel_time = max(0.1, np.random.normal(DELIVERY_TIME_MEAN, DELIVERY_TIME_STD))
+            
+            # Simulate travel to store
+            yield self.env.timeout(delivery_travel_time)
+
+            # Update store inventory and costs
+            distance = self.distances.get(store.store_id, 0)
+            transport_cost = (TRANSPORT_COST_PER_DELIVERY_BASE +
+                              (distance * TRANSPORT_COST_PER_KM) +
+                              (DELIVERY_QUANTITY * TRANSPORT_COST_PER_UNIT_LOAD))
+            
+            store.inventory += DELIVERY_QUANTITY
+            store.total_transport_cost += transport_cost
+            self.total_transport_cost += transport_cost # DC also tracks total transport cost
+            
+            print(f"[{self.env.now:.2f}]: Delivery completed for {store.name}. New inventory: {store.inventory}. Cost: {transport_cost:.2f}")
+
+            # Simulate return trip for the truck
+            yield self.env.timeout(delivery_travel_time)
+            print(f"[{self.env.now:.2f}]: Truck returned to DC from {store.name}.")
+
+    def periodic_check_and_order(self):
+        while True:
+            yield self.env.timeout(DELIVERY_CHECK_INTERVAL)
+            print(f"[{self.env.now:.2f}]: DC performing periodic stock check for all stores.")
+
+            for store in self.stores:
+                if self.check_if_stock_below_reorder_point(store):
+                    # Start a new process for each delivery request
+                    # This allows multiple deliveries to be in progress or queued
+                    self.env.process(self._execute_delivery(store))
 
 # -------------------- Simulation Runner --------------------
 def simulate(store_configs):
     env = simpy.Environment()
     stores = [Store(env, store_id, storage_type) for store_id, storage_type in store_configs]
-    env.process(delivery(env, stores))
+    trucks = simpy.Resource(env, capacity=NUM_TRUCKS)
+    dc = DistributionCenter(env, stores=stores, trucks=trucks) 
     env.run(until=SIM_DAYS)
 
     # Reporting
