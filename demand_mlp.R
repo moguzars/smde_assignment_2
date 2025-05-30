@@ -1,6 +1,7 @@
 library(readr)
 library(dplyr)
 
+
 # Load and preprocess data
 data <- read_csv("Walmart_Sales.csv")
 data$Date <- as.Date(data$Date, format = "%d-%m-%Y")
