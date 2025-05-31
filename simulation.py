@@ -9,6 +9,31 @@ sales_df = pd.read_csv("Walmart_Sales.csv")
 sales_df["Date"] = pd.to_datetime(sales_df["Date"], format="%d-%m-%Y")
 sales_df["Store"] = sales_df["Store"].astype(str)
 
+# -------------------- MLP Coefficients from R --------------------
+coefficients = {
+    'intercept': 6.210e+05,
+    'Holiday_Flag': 1.803e+04,
+    'Temperature': -455.2,
+    'Fuel_Price': -27860.0,
+    'CPI': 2804.0,
+    'Unemployment': -18150.0,
+    'Last_Week_Sales': 0.378,
+
+    # Store-specific coefficients
+    'Store2': 234600.0, 'Store3': -732800.0, 'Store4': 546000.0, 'Store5': -794300.0,
+    'Store6': -11220.0, 'Store7': -544600.0, 'Store8': -442400.0, 'Store9': -666400.0,
+    'Store10': 491500.0, 'Store11': -137600.0, 'Store12': 20780.0, 'Store13': 506900.0,
+    'Store14': 411100.0, 'Store15': -342800.0, 'Store16': -613300.0, 'Store17': -198100.0,
+    'Store18': -44100.0, 'Store19': 168400.0, 'Store20': 357500.0, 'Store21': -490200.0,
+    'Store22': -102600.0, 'Store23': 66870.0, 'Store24': 119100.0, 'Store25': -514900.0,
+    'Store26': -120600.0, 'Store27': 368600.0, 'Store28': 217000.0, 'Store29': -364700.0,
+    'Store30': -691900.0, 'Store31': -94760.0, 'Store32': -169300.0, 'Store33': -530800.0,
+    'Store34': -83710.0, 'Store35': -158800.0, 'Store36': -719700.0, 'Store37': -633800.0,
+    'Store38': -371900.0, 'Store39': -62090.0, 'Store40': -197300.0, 'Store41': -143600.0,
+    'Store42': -350800.0, 'Store43': -506000.0, 'Store44': -557300.0, 'Store45': -374200.0
+}
+
+
 START_DATE = datetime.strptime("05-02-2010", "%d-%m-%Y").date()
 
 # Compute weekly customer arrival intervals
@@ -39,9 +64,9 @@ STORAGE_COST_PER_UNIT_PER_DAY = 1
 
 # Define storage tiers
 STORAGE_TIERS = {
-    "small":  {"capacity": 100, "monthly_rent": 500},
-    "medium": {"capacity": 200, "monthly_rent": 1000},
-    "large":  {"capacity": 400, "monthly_rent": 2000},
+    "small":  {"capacity": 10000, "monthly_rent": 5000},
+    "medium": {"capacity": 20000, "monthly_rent": 10000},
+    "large":  {"capacity": 40000, "monthly_rent": 20000},
 }
 
 TRANSPORT_TIERS = {
@@ -51,6 +76,7 @@ TRANSPORT_TIERS = {
 
 
 # Distances from distribution center (DC) for each store
+np.random.seed(42)
 num_elements = 45
 min_km = 10
 max_km = 500
@@ -62,7 +88,6 @@ clipped_distances = np.clip(raw_distances, min_km, max_km)
 DELIVERY_QUANTITY = 10000
 INITIAL_INVENTORY = 10000 # Average weekly sales overall
 TRANSPORT_COST_PER_DELIVERY = 100
-START_DATE = datetime.strptime("2012-09-14", "%Y-%m-%d").date()
 NUM_TRUCKS = 2
 DELIVERY_TIME_MEAN = 1.5
 DELIVERY_TIME_STD = 0.3
@@ -109,6 +134,7 @@ class Store:
         return arrival_lookup.get((self.store_id, week_start), 99999)
 
     def run(self):
+        arrival_interval = self.get_arrival_interval(START_DATE)
         while True:
             sim_day = int(self.env.now)
             current_date = START_DATE + timedelta(days=sim_day)
@@ -119,9 +145,9 @@ class Store:
                 self.total_storage_cost += self.inventory * STORAGE_COST_PER_UNIT_PER_DAY
                 if sim_day % 30 == 0:
                     self.total_rent_paid += self.monthly_rent
-
-            # Get customer arrival interval for this date
-            arrival_interval = self.get_arrival_interval(current_date)
+                total_sales_list[f'Store{self.store_id}'].append(self.total_stockouts)
+                # Get customer arrival interval for this date
+                arrival_interval = self.get_arrival_interval(current_date)
             yield self.env.timeout(random.expovariate(1.0 / arrival_interval))
 
             # Handle customer
@@ -148,19 +174,52 @@ class DistributionCenter:
         self.action = env.process(self.periodic_check_and_order())
         
     def check_if_stock_below_reorder_point(self, store):
-        return store.inventory < REORDER_POINT
-    
+        return store.inventory <=0
+
     def check_model(self, store):
+        current_day = int(self.env.now)
+        current_date = START_DATE + timedelta(days=current_day)
+        week_start = current_date - timedelta(days=current_date.weekday() - 4)
+
+        # Lookup inputs
+        key = (store.store_id, week_start)
+        holiday = 1 if key in arrival_lookup and arrival_lookup[key] < 99999 else 0
+        fuel_price = fuel_lookup.get(key, AVG_FUEL_PRICE)
+        last_week_sales = units_lookup.get(key, 0) * 100  # convert back to € to match model input
+        cpi = sales_df.loc[
+            (sales_df["Store"] == store.store_id) & (sales_df["Date"].dt.date == week_start), "CPI"].mean()
+        unemployment = sales_df.loc[
+            (sales_df["Store"] == store.store_id) & (sales_df["Date"].dt.date == week_start), "Unemployment"].mean()
+        temperature = sales_df.loc[
+            (sales_df["Store"] == store.store_id) & (sales_df["Date"].dt.date == week_start), "Temperature"].mean()
+
+        # Fallbacks
+        cpi = cpi if not pd.isna(cpi) else sales_df["CPI"].mean()
+        unemployment = unemployment if not pd.isna(unemployment) else sales_df["Unemployment"].mean()
+        temperature = temperature if not pd.isna(temperature) else sales_df["Temperature"].mean()
+
+        # Linear regression formula (MLP)
+        store_id = int(store.store_id)
+        y_pred = coefficients["intercept"]
+        y_pred += coefficients.get(f"Store{store_id}", 0)
+        y_pred += coefficients["Holiday_Flag"] * holiday
+        y_pred += coefficients["Temperature"] * temperature
+        y_pred += coefficients["Fuel_Price"] * fuel_price
+        y_pred += coefficients["CPI"] * cpi
+        y_pred += coefficients["Unemployment"] * unemployment
+        y_pred += coefficients["Last_Week_Sales"] * last_week_sales
+
+        weekly_predicted_units = y_pred / 100  # Convert € back to unit demand
+        hourly_demand = (weekly_predicted_units / 7) / 24
+
+        # Lead time buffer: 1 day + travel time
         distance = self.distances.get(store.store_id, 0)
-        delivery_travel_time = distance/self.truck_speed
-        weekly_units = self.get_weekly_units(store.store_id, START_DATE + timedelta(days=int(self.env.now)))
-        hourly_units = ((weekly_units) / 7)/24
+        delivery_lead_time = 24 + (distance / self.truck_speed)
+        print(store.inventory)
+        # Will they run out before new stock can arrive?
+        threshold = hourly_demand * delivery_lead_time
+        return store.inventory < threshold
 
-        if (store.inventory > hourly_units * (24 + delivery_travel_time)): #placeholder for real calculation -> if not going to run out in 1 day, no order
-            return False
-
-        return True
-    
     def get_fuel_price(self, store, current_date):
         week_start = current_date - timedelta(days=current_date.weekday()-4)
         return arrival_lookup.get((store, week_start), 99999)
@@ -177,7 +236,7 @@ class DistributionCenter:
             distance = self.distances.get(store.store_id, 0)
             delivery_travel_time = distance/self.truck_speed
             
-            yield self.env.timeout(delivery_travel_time)
+            yield self.env.timeout(delivery_travel_time/24)
             
             current_date = START_DATE + timedelta(days=int(self.env.now))
             fuel_price = self.get_fuel_price(store.store_id, current_date)
@@ -192,7 +251,7 @@ class DistributionCenter:
             self.total_transport_cost += transport_cost
             
             # print(f"[{self.env.now:.2f}]: Delivery completed for {store.name}. New inventory: {store.inventory}. Cost: {transport_cost:.2f}")
-            yield self.env.timeout(delivery_travel_time)
+            yield self.env.timeout(delivery_travel_time/24)
             # print(f"[{self.env.now:.2f}]: Truck returned to DC from {store.name}.")
 
     def periodic_check_and_order(self):
@@ -239,12 +298,18 @@ def simulate(store_configs, transport_type, order_policy):
     print(f"TOTAL Lost Profit: €{total_lost_profit:.2f}")
     print(f"FINAL Profit: €{final_profit:.2f}")
 
+total_sales_list = {
+    'Store1':[],
+    'Store2':[],
+    'Store3':[],
+}
 # Example usage: (store_id, storage_type)
 simulate([
         ("1", "large"),
-        ("1", "large"),
-        ("1", "large")
-    ], 
+        ("2", "large"),
+        ("3", "large"),
+],
     "low",
     "half"
 )
+print(total_sales_list)
