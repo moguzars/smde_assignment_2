@@ -1,6 +1,7 @@
 import simpy
 import pandas as pd
 import numpy as np
+import statistics
 import random
 from datetime import datetime, timedelta
 
@@ -58,7 +59,7 @@ units_lookup = {
 
 # -------------------- Configuration --------------------
 UNIT_SALE_PRICE = 1
-SIM_DAYS = 31  # For full simulation it is 1000 days
+SIM_DAYS = 2  # For full simulation it is 1000 days
 STORAGE_COST_PER_UNIT_PER_DAY = 0.001
 TRANSPORT_COST_PER_DELIVERY_BASE = 100
 TRANSPORT_COST_PER_UNIT_LOAD_PER_KM = 0.00001
@@ -304,14 +305,30 @@ def simulate(store_type, truck_capacities, truck_numbers):
     print(f"FINAL Profit: €{final_profit:.2f}")
     print(f"NET Profit: €{net_profit:.2f}")
 
-total_sales_list = {
-    'Store1':[],
-    'Store2':[],
-    'Store3':[],
-}
-# Example usage: (store_id, storage_type)
+    return final_profit
+
+
 simulate(
-    "low", #store capacity
-    "high",   #truck capacities
+    "low",   #store capacity
+    "high",  #truck capacities
     "low",   #truck numbers
 )
+
+options = ["low", "high"]
+results = {}
+
+for j in range(2):
+    for k in range(2):
+        for l in range(2):
+            opt_combo = (options[j], options[k], options[l])
+            trials = []
+            for i in range(15):
+                result = simulate(*opt_combo)
+                trials.append(result)
+            results[opt_combo] = trials
+
+# Print averages and standard deviations
+for combo, trials in results.items():
+    avg = statistics.mean(trials)
+    stddev = statistics.stdev(trials)
+    print(f"Options: {combo} -> Avg: {avg:.2f}, Stddev: {stddev:.2f}")
