@@ -164,16 +164,19 @@ class Store:
 
     def run(self):
         arrival_interval = self.get_arrival_interval(START_DATE)
+
         while True:
             sim_day = int(self.env.now)
             current_date = START_DATE + timedelta(days=sim_day)
 
             # Track storage and rent costs daily
             if sim_day != self.last_day_checked:
-                # total_sales_list[f'Store{self.store_id}'].append(self.total_stockouts)
-                # Get customer arrival interval for this date
+                self.last_day_checked = sim_day
                 if sim_day % 7 == 0:
                     arrival_interval = self.get_arrival_interval(current_date)
+
+            if sim_day % 7 == 0 and sim_day != self.last_day_checked:
+                arrival_interval = self.get_arrival_interval(current_date)
             yield self.env.timeout(random.expovariate(1.0 / arrival_interval))
 
             # Handle customer
@@ -184,6 +187,7 @@ class Store:
             else:
                 self.total_stockouts += 1
                 self.lost_profit += UNIT_SALE_PRICE
+            
 
 # -------------------- Delivery Process --------------------
 class DistributionCenter:
@@ -240,7 +244,7 @@ class DistributionCenter:
 
     def periodic_check_and_order(self):
         while True:
-            yield self.env.timeout(DELIVERY_CHECK_INTERVAL)
+            yield self.env.timeout(1)
             sim_day = int(self.env.now)
 
             print(f"[{self.env.now:.2f}]: DC performing periodic stock check for all stores.")
