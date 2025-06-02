@@ -9,7 +9,7 @@ sales_df = pd.read_csv("Walmart_Sales.csv")
 sales_df["Date"] = pd.to_datetime(sales_df["Date"], format="%d-%m-%Y")
 sales_df["Store"] = sales_df["Store"].astype(str)
 
-# -------------------- MLP Coefficients from R --------------------
+# -------------------- MLP coefficientsicients from R --------------------
 coefficients = {
     'intercept': 6.210e+05,
     'Holiday_Flag': 1.803e+04,
@@ -19,7 +19,7 @@ coefficients = {
     'Unemployment': -18150.0,
     'Last_Week_Sales': 0.378,
 
-    # Store-specific coefficients
+    # Store-specific coefficientsicients
     'Store2': 234600.0, 'Store3': -732800.0, 'Store4': 546000.0, 'Store5': -794300.0,
     'Store6': -11220.0, 'Store7': -544600.0, 'Store8': -442400.0, 'Store9': -666400.0,
     'Store10': 491500.0, 'Store11': -137600.0, 'Store12': 20780.0, 'Store13': 506900.0,
@@ -103,6 +103,16 @@ STORE_DISTANCES_FROM_DC = {
 }
 AVG_FUEL_PRICE = sales_df["Fuel_Price"].mean()
 
+def predict_weekly_sales(store_id, holiday_flag, temperature, fuel_price, cpi, unemployment, last_week_sales):
+    intercept = coefficients['intercept']
+    store_coef = coefficients.get(f'Store{store_id}', 0)
+    return intercept + store_coef + \
+           coefficients['Holiday_Flag'] * holiday_flag + \
+           coefficients['Temperature'] * temperature + \
+           coefficients['Fuel_Price'] * fuel_price + \
+           coefficients['CPI'] * cpi + \
+           coefficients['Unemployment'] * unemployment + \
+           coefficients['Last_Week_Sales'] * last_week_sales
 
 # -------------------- Store Class --------------------
 class Store:
@@ -126,12 +136,35 @@ class Store:
         self.total_storage_cost = 0
         self.total_rent_paid = 0
         self.last_day_checked = -1
-
+        self.last_week_predicted_sales = None  # for using in subsequent predictions
         self.action = env.process(self.run())
 
     def get_arrival_interval(self, current_date):
-        week_start = current_date - timedelta(days=current_date.weekday()-4)
-        return arrival_lookup.get((self.store_id, week_start), 99999)
+        week_start = current_date - timedelta(days=current_date.weekday() - 4)
+        try:
+            features = sales_df[
+                (sales_df['Store'] == self.store_id) &
+                (sales_df['Date'].dt.date == week_start)
+                ].iloc[0]
+            if self.last_week_predicted_sales is None:
+                self.last_week_predicted_sales = features['Weekly_Sales']
+
+            predicted_sales = predict_weekly_sales(
+                store_id=int(self.store_id),
+                holiday_flag=features['Holiday_Flag'],
+                temperature=features['Temperature'],
+                fuel_price=features['Fuel_Price'],
+                cpi=features['CPI'],
+                unemployment=features['Unemployment'],
+                last_week_sales=self.last_week_predicted_sales
+            )
+            units = predicted_sales / 100
+            if units > 0:
+                return 7 / units
+        except Exception as e:
+            print(e)
+            pass
+        return 99999  # fallback in case of missing data
 
     def run(self):
         arrival_interval = self.get_arrival_interval(START_DATE)
@@ -147,7 +180,8 @@ class Store:
                     self.total_rent_paid += self.monthly_rent
                 total_sales_list[f'Store{self.store_id}'].append(self.total_stockouts)
                 # Get customer arrival interval for this date
-                arrival_interval = self.get_arrival_interval(current_date)
+                if sim_day % 7 == 0:
+                    arrival_interval = self.get_arrival_interval(current_date)
             yield self.env.timeout(random.expovariate(1.0 / arrival_interval))
 
             # Handle customer
@@ -176,49 +210,49 @@ class DistributionCenter:
     def check_if_stock_below_reorder_point(self, store):
         return store.inventory <=0
 
-    def check_model(self, store):
-        current_day = int(self.env.now)
-        current_date = START_DATE + timedelta(days=current_day)
-        week_start = current_date - timedelta(days=current_date.weekday() - 4)
-
-        # Lookup inputs
-        key = (store.store_id, week_start)
-        holiday = 1 if key in arrival_lookup and arrival_lookup[key] < 99999 else 0
-        fuel_price = fuel_lookup.get(key, AVG_FUEL_PRICE)
-        last_week_sales = units_lookup.get(key, 0) * 100  # convert back to € to match model input
-        cpi = sales_df.loc[
-            (sales_df["Store"] == store.store_id) & (sales_df["Date"].dt.date == week_start), "CPI"].mean()
-        unemployment = sales_df.loc[
-            (sales_df["Store"] == store.store_id) & (sales_df["Date"].dt.date == week_start), "Unemployment"].mean()
-        temperature = sales_df.loc[
-            (sales_df["Store"] == store.store_id) & (sales_df["Date"].dt.date == week_start), "Temperature"].mean()
-
-        # Fallbacks
-        cpi = cpi if not pd.isna(cpi) else sales_df["CPI"].mean()
-        unemployment = unemployment if not pd.isna(unemployment) else sales_df["Unemployment"].mean()
-        temperature = temperature if not pd.isna(temperature) else sales_df["Temperature"].mean()
-
-        # Linear regression formula (MLP)
-        store_id = int(store.store_id)
-        y_pred = coefficients["intercept"]
-        y_pred += coefficients.get(f"Store{store_id}", 0)
-        y_pred += coefficients["Holiday_Flag"] * holiday
-        y_pred += coefficients["Temperature"] * temperature
-        y_pred += coefficients["Fuel_Price"] * fuel_price
-        y_pred += coefficients["CPI"] * cpi
-        y_pred += coefficients["Unemployment"] * unemployment
-        y_pred += coefficients["Last_Week_Sales"] * last_week_sales
-
-        weekly_predicted_units = y_pred / 100  # Convert € back to unit demand
-        hourly_demand = (weekly_predicted_units / 7) / 24
-
-        # Lead time buffer: 1 day + travel time
-        distance = self.distances.get(store.store_id, 0)
-        delivery_lead_time = 24 + (distance / self.truck_speed)
-        print(store.inventory)
-        # Will they run out before new stock can arrive?
-        threshold = hourly_demand * delivery_lead_time
-        return store.inventory < threshold
+    # def check_model(self, store):
+    #     current_day = int(self.env.now)
+    #     current_date = START_DATE + timedelta(days=current_day)
+    #     week_start = current_date - timedelta(days=current_date.weekday() - 4)
+    #
+    #     # Lookup inputs
+    #     key = (store.store_id, week_start)
+    #     holiday = 1 if key in arrival_lookup and arrival_lookup[key] < 99999 else 0
+    #     fuel_price = fuel_lookup.get(key, AVG_FUEL_PRICE)
+    #     last_week_sales = units_lookup.get(key, 0) * 100  # convert back to € to match model input
+    #     cpi = sales_df.loc[
+    #         (sales_df["Store"] == store.store_id) & (sales_df["Date"].dt.date == week_start), "CPI"].mean()
+    #     unemployment = sales_df.loc[
+    #         (sales_df["Store"] == store.store_id) & (sales_df["Date"].dt.date == week_start), "Unemployment"].mean()
+    #     temperature = sales_df.loc[
+    #         (sales_df["Store"] == store.store_id) & (sales_df["Date"].dt.date == week_start), "Temperature"].mean()
+    #
+    #     # Fallbacks
+    #     cpi = cpi if not pd.isna(cpi) else sales_df["CPI"].mean()
+    #     unemployment = unemployment if not pd.isna(unemployment) else sales_df["Unemployment"].mean()
+    #     temperature = temperature if not pd.isna(temperature) else sales_df["Temperature"].mean()
+    #
+    #     # Linear regression formula (MLP)
+    #     store_id = int(store.store_id)
+    #     y_pred = coefficientsicients["intercept"]
+    #     y_pred += coefficientsicients.get(f"Store{store_id}", 0)
+    #     y_pred += coefficientsicients["Holiday_Flag"] * holiday
+    #     y_pred += coefficientsicients["Temperature"] * temperature
+    #     y_pred += coefficientsicients["Fuel_Price"] * fuel_price
+    #     y_pred += coefficientsicients["CPI"] * cpi
+    #     y_pred += coefficientsicients["Unemployment"] * unemployment
+    #     y_pred += coefficientsicients["Last_Week_Sales"] * last_week_sales
+    #
+    #     weekly_predicted_units = y_pred / 100  # Convert € back to unit demand
+    #     hourly_demand = (weekly_predicted_units / 7) / 24
+    #
+    #     # Lead time buffer: 1 day + travel time
+    #     distance = self.distances.get(store.store_id, 0)
+    #     delivery_lead_time = 24 + (distance / self.truck_speed)
+    #     print(store.inventory)
+    #     # Will they run out before new stock can arrive?
+    #     threshold = hourly_demand * delivery_lead_time
+    #     return store.inventory < threshold
 
     def get_fuel_price(self, store, current_date):
         week_start = current_date - timedelta(days=current_date.weekday()-4)
@@ -312,4 +346,3 @@ simulate([
     "low",
     "half"
 )
-print(total_sales_list)
