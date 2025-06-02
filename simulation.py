@@ -57,30 +57,30 @@ units_lookup = {
 }
 
 # -------------------- Configuration --------------------
-UNIT_SALE_PRICE = 100
-SIM_DAYS = 50  # For full simulation it is 1000 days
-STORAGE_COST_PER_UNIT_PER_DAY = 1
+UNIT_SALE_PRICE = 1
+SIM_DAYS = 31  # For full simulation it is 1000 days
+STORAGE_COST_PER_UNIT_PER_DAY = 0.001
 TRANSPORT_COST_PER_DELIVERY_BASE = 100
-TRANSPORT_COST_PER_UNIT_LOAD_PER_KM = 0.0001
+TRANSPORT_COST_PER_UNIT_LOAD_PER_KM = 0.00001
 DELIVERY_CHECK_INTERVAL = 1
 
 
 # Define storage tiers
 STORAGE_TIERS = {
-    "small":  {"capacity": 10000, "monthly_rent":  5000},
+    "low":  {"capacity": 10000, "monthly_rent":  5000},
     "medium": {"capacity": 20000, "monthly_rent":  9000},
-    "large":  {"capacity": 40000, "monthly_rent": 17000},
+    "high":  {"capacity": 40000, "monthly_rent": 17000},
 }
 
 
 TRUCK_CAPACITIES = {
-    "low" : {"delivery_quantity": 1000, "montly_rent": 100, "truck_gas_consumption": 1 },
-    "high": {"delivery_quantity": 2000, "montly_rent": 180, "truck_gas_consumption": 1.5}
+    "low" : {"delivery_quantity": 2000, "monthly_rent": 1000, "truck_gas_consumption": 1 },
+    "high": {"delivery_quantity": 4000, "monthly_rent": 1800, "truck_gas_consumption": 1.7}
 }
 
 TRUCK_NUMBERS = {
-    "low" : {"trucks": 1},
-    "high": {"trucks": 2}
+    "low" : {"trucks": 30},
+    "high": {"trucks": 50}
 }
 
 
@@ -191,7 +191,7 @@ class Store:
 
 # -------------------- Delivery Process --------------------
 class DistributionCenter:
-    def __init__(self, env, stores, trucks, capacities, order_policy, distances=STORE_DISTANCES_FROM_DC):
+    def __init__(self, env, stores, trucks, capacities, distances=STORE_DISTANCES_FROM_DC):
         self.env = env
         self.stores = stores
         self.trucks = trucks
@@ -200,7 +200,6 @@ class DistributionCenter:
         self.truck_capacity = TRUCK_CAPACITIES[capacities]["delivery_quantity"]
         self.distances = distances
         self.total_transport_cost = 0
-        self.order_policy = order_policy
         self.action = env.process(self.periodic_check_and_order())
         self.total_storage_cost = 0
         
@@ -225,14 +224,14 @@ class DistributionCenter:
             yield request
             distance = self.distances.get(store.store_id, 0)
             delivery_travel_time = distance/self.truck_speed
-            print(f"[{self.env.now:.2f}]: Truck acquired for {store.name}. Beginning delivery for time {delivery_travel_time}")
+            # print(f"[{self.env.now:.2f}]: Truck acquired for {store.name}. Beginning delivery for time {delivery_travel_time}")
             
             yield self.env.timeout(delivery_travel_time/24)
             
             current_date = START_DATE + timedelta(days=int(self.env.now))
-            fuel_price = self.get_fuel_price(store.store_id, current_date)
+            fuel_price_per_km = self.get_fuel_price(store.store_id, current_date)/10
             transport_cost = (TRANSPORT_COST_PER_DELIVERY_BASE +
-                              (distance * (fuel_price * self.fuel_per_km) +
+                              (distance * (fuel_price_per_km * self.fuel_per_km) +
                               (distance/2) * (self.truck_capacity * TRANSPORT_COST_PER_UNIT_LOAD_PER_KM )))
             
             
@@ -247,14 +246,13 @@ class DistributionCenter:
             yield self.env.timeout(1)
             sim_day = int(self.env.now)
 
-            print(f"[{self.env.now:.2f}]: DC performing periodic stock check for all stores.")
+            # print(f"[{self.env.now:.2f}]: DC performing periodic stock check for all stores.")
 
             store_metrics = []
             for store in self.stores:
                 if (store.capacity - store.inventory < self.truck_capacity):
                     continue
-                if self.order_policy == "level":
-                    store_metrics.append((store, store.inventory))
+                store_metrics.append((store, store.inventory))
                 # if self.order_policy == "distance":
                 #     store_metrics.append((store, self.distances[store.store_id]))
                 # if self.order_policy == "predicted_sales":
@@ -269,11 +267,11 @@ class DistributionCenter:
             
 
 # -------------------- Simulation Runner --------------------
-def simulate(store_type, truck_capacities, truck_numbers, order_policy):
+def simulate(store_type, truck_capacities, truck_numbers):
     env = simpy.Environment()
     stores = [Store(env, store_id, store_type) for store_id in range(1,46)]
     trucks = simpy.Resource(env, capacity=TRUCK_NUMBERS[truck_numbers]["trucks"])
-    dc = DistributionCenter(env, stores=stores, trucks=trucks, capacities=truck_capacities, order_policy=order_policy) 
+    dc = DistributionCenter(env, stores=stores, trucks=trucks, capacities=truck_capacities) 
     env.run(until=SIM_DAYS)
     
 
@@ -281,7 +279,7 @@ def simulate(store_type, truck_capacities, truck_numbers, order_policy):
     total_revenue = sum(s.total_revenue for s in stores)
     total_transport = dc.total_transport_cost
     total_storage = dc.total_storage_cost
-    store_rent = (len(stores) * STORAGE_TIERS[store_type]["montly_rent"] * SIM_DAYS)/30
+    store_rent = (len(stores) * STORAGE_TIERS[store_type]["monthly_rent"] * SIM_DAYS)/30
     truck_rent = (TRUCK_NUMBERS[truck_numbers]["trucks"] * TRUCK_CAPACITIES[truck_capacities]["monthly_rent"] * SIM_DAYS) / 30
     total_rent = store_rent + truck_rent
     total_stockouts = sum(s.total_stockouts for s in stores)
@@ -290,12 +288,12 @@ def simulate(store_type, truck_capacities, truck_numbers, order_policy):
     final_profit = total_revenue - total_transport - total_storage - total_rent
     net_profit   = final_profit - total_lost_profit
 
-    print(f"--- Simulation Results after {SIM_DAYS} days ---")
-    for s in stores:
-        print(f"{s.name} ({s.storage_type}) | Sales: {s.total_sales}, "
-              f"Revenue: {s.total_revenue:.2f}, Stockouts: {s.total_stockouts}, "
-              f"Lost Profit: {s.lost_profit:.2f}, Transport: {s.total_transport_cost}, "
-              f"Storage Cost: {s.total_storage_cost:.2f}, Rent Paid: {s.total_rent_paid}")
+    # print(f"--- Simulation Results after {SIM_DAYS} days ---")
+    # for s in stores:
+    #     print(f"{s.name} ({s.storage_type}) | Sales: {s.total_sales}, "
+    #           f"Revenue: {s.total_revenue:.2f}, Stockouts: {s.total_stockouts}, "
+    #           f"Lost Profit: {s.lost_profit:.2f}, Transport: {s.total_transport_cost}, "
+    #           f"Storage Cost: {s.total_storage_cost:.2f}, Rent Paid: {s.total_rent_paid}")
 
     print(f"\nTOTAL Revenue: €{total_revenue:.2f}")
     print(f"TOTAL Transport Cost: €{total_transport:.2f}")
@@ -313,8 +311,7 @@ total_sales_list = {
 }
 # Example usage: (store_id, storage_type)
 simulate(
-    "small",
-    "low",
-    "low",
-    "level"
+    "low", #store capacity
+    "high",   #truck capacities
+    "low",   #truck numbers
 )
