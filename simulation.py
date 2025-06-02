@@ -58,50 +58,46 @@ units_lookup = {
 
 # -------------------- Configuration --------------------
 UNIT_SALE_PRICE = 100
-DELIVERY_INTERVAL = 1
-SIM_DAYS = 100  # For full simulation it is 1000 days
+SIM_DAYS = 50  # For full simulation it is 1000 days
 STORAGE_COST_PER_UNIT_PER_DAY = 1
+TRANSPORT_COST_PER_DELIVERY_BASE = 100
+TRANSPORT_COST_PER_UNIT_LOAD_PER_KM = 0.0001
+DELIVERY_CHECK_INTERVAL = 1
+
 
 # Define storage tiers
 STORAGE_TIERS = {
-    "small":  {"capacity": 10000, "monthly_rent": 5000},
-    "medium": {"capacity": 20000, "monthly_rent": 10000},
-    "large":  {"capacity": 40000, "monthly_rent": 20000},
+    "small":  {"capacity": 10000, "monthly_rent":  5000},
+    "medium": {"capacity": 20000, "monthly_rent":  9000},
+    "large":  {"capacity": 40000, "monthly_rent": 17000},
 }
 
-TRANSPORT_TIERS = {
-    "low": {"trucks": 45, "truck_speed": 50, "fuel_per_km": 0.06, "delivery_quantity": 20},
-    "high": {"trucks": 90, "truck_speed": 60, "fuel_per_km": 0.05, "delivery_quantity": 40}
+
+TRUCK_CAPACITIES = {
+    "low" : {"delivery_quantity": 1000, "montly_rent": 100, "truck_gas_consumption": 1 },
+    "high": {"delivery_quantity": 2000, "montly_rent": 180, "truck_gas_consumption": 1.5}
 }
+
+TRUCK_NUMBERS = {
+    "low" : {"trucks": 1},
+    "high": {"trucks": 2}
+}
+
 
 
 # Distances from distribution center (DC) for each store
 np.random.seed(42)
 num_elements = 45
-min_km = 10
-max_km = 500
+min_km = 50
+max_km = 2000
 mean = (min_km + max_km) / 2
 std_dev = (max_km - min_km) / 6
 raw_distances = np.random.normal(loc=mean, scale=std_dev, size=num_elements)
 clipped_distances = np.clip(raw_distances, min_km, max_km)
-
-DELIVERY_QUANTITY = 10000
-INITIAL_INVENTORY = 10000 # Average weekly sales overall
-TRANSPORT_COST_PER_DELIVERY = 100
-NUM_TRUCKS = 2
-DELIVERY_TIME_MEAN = 1.5
-DELIVERY_TIME_STD = 0.3
-REORDER_POINT = 5000
-TRANSPORT_COST_PER_DELIVERY_BASE = 100
-TRANSPORT_COST_PER_UNIT_LOAD_PER_KM = 0.0001
-TRANSPORT_COST_PER_KM = 0.5
-DELIVERY_CHECK_INTERVAL = 1
-
 STORE_DISTANCES_FROM_DC = {
     store_id: dist
     for store_id, dist in zip(sales_df["Store"].unique(), clipped_distances.tolist())
 }
-AVG_FUEL_PRICE = sales_df["Fuel_Price"].mean()
 
 def predict_weekly_sales(store_id, holiday_flag, temperature, fuel_price, cpi, unemployment, last_week_sales):
     intercept = coefficients['intercept']
@@ -174,11 +170,7 @@ class Store:
 
             # Track storage and rent costs daily
             if sim_day != self.last_day_checked:
-                self.last_day_checked = sim_day
-                self.total_storage_cost += self.inventory * STORAGE_COST_PER_UNIT_PER_DAY
-                if sim_day % 30 == 0:
-                    self.total_rent_paid += self.monthly_rent
-                total_sales_list[f'Store{self.store_id}'].append(self.total_stockouts)
+                # total_sales_list[f'Store{self.store_id}'].append(self.total_stockouts)
                 # Get customer arrival interval for this date
                 if sim_day % 7 == 0:
                     arrival_interval = self.get_arrival_interval(current_date)
@@ -195,64 +187,21 @@ class Store:
 
 # -------------------- Delivery Process --------------------
 class DistributionCenter:
-    def __init__(self, env, stores, trucks, transport_type, order_policy, distances=STORE_DISTANCES_FROM_DC):
+    def __init__(self, env, stores, trucks, capacities, order_policy, distances=STORE_DISTANCES_FROM_DC):
         self.env = env
         self.stores = stores
         self.trucks = trucks
-        self.truck_speed = TRANSPORT_TIERS[transport_type]["truck_speed"]
-        self.fuel_per_km = TRANSPORT_TIERS[transport_type]["fuel_per_km"]
-        self.capacity = TRANSPORT_TIERS[transport_type]["delivery_quantity"]
+        self.truck_speed = 60
+        self.fuel_per_km = TRUCK_CAPACITIES[capacities]["truck_gas_consumption"]
+        self.truck_capacity = TRUCK_CAPACITIES[capacities]["delivery_quantity"]
         self.distances = distances
         self.total_transport_cost = 0
         self.order_policy = order_policy
         self.action = env.process(self.periodic_check_and_order())
+        self.total_storage_cost = 0
         
     def check_if_stock_below_reorder_point(self, store):
         return store.inventory <=0
-
-    # def check_model(self, store):
-    #     current_day = int(self.env.now)
-    #     current_date = START_DATE + timedelta(days=current_day)
-    #     week_start = current_date - timedelta(days=current_date.weekday() - 4)
-    #
-    #     # Lookup inputs
-    #     key = (store.store_id, week_start)
-    #     holiday = 1 if key in arrival_lookup and arrival_lookup[key] < 99999 else 0
-    #     fuel_price = fuel_lookup.get(key, AVG_FUEL_PRICE)
-    #     last_week_sales = units_lookup.get(key, 0) * 100  # convert back to € to match model input
-    #     cpi = sales_df.loc[
-    #         (sales_df["Store"] == store.store_id) & (sales_df["Date"].dt.date == week_start), "CPI"].mean()
-    #     unemployment = sales_df.loc[
-    #         (sales_df["Store"] == store.store_id) & (sales_df["Date"].dt.date == week_start), "Unemployment"].mean()
-    #     temperature = sales_df.loc[
-    #         (sales_df["Store"] == store.store_id) & (sales_df["Date"].dt.date == week_start), "Temperature"].mean()
-    #
-    #     # Fallbacks
-    #     cpi = cpi if not pd.isna(cpi) else sales_df["CPI"].mean()
-    #     unemployment = unemployment if not pd.isna(unemployment) else sales_df["Unemployment"].mean()
-    #     temperature = temperature if not pd.isna(temperature) else sales_df["Temperature"].mean()
-    #
-    #     # Linear regression formula (MLP)
-    #     store_id = int(store.store_id)
-    #     y_pred = coefficientsicients["intercept"]
-    #     y_pred += coefficientsicients.get(f"Store{store_id}", 0)
-    #     y_pred += coefficientsicients["Holiday_Flag"] * holiday
-    #     y_pred += coefficientsicients["Temperature"] * temperature
-    #     y_pred += coefficientsicients["Fuel_Price"] * fuel_price
-    #     y_pred += coefficientsicients["CPI"] * cpi
-    #     y_pred += coefficientsicients["Unemployment"] * unemployment
-    #     y_pred += coefficientsicients["Last_Week_Sales"] * last_week_sales
-    #
-    #     weekly_predicted_units = y_pred / 100  # Convert € back to unit demand
-    #     hourly_demand = (weekly_predicted_units / 7) / 24
-    #
-    #     # Lead time buffer: 1 day + travel time
-    #     distance = self.distances.get(store.store_id, 0)
-    #     delivery_lead_time = 24 + (distance / self.truck_speed)
-    #     print(store.inventory)
-    #     # Will they run out before new stock can arrive?
-    #     threshold = hourly_demand * delivery_lead_time
-    #     return store.inventory < threshold
 
     def get_fuel_price(self, store, current_date):
         week_start = current_date - timedelta(days=current_date.weekday()-4)
@@ -264,58 +213,78 @@ class DistributionCenter:
 
 
     def _execute_delivery(self, store):
+        if (self.trucks.count >= self.trucks.capacity):
+            # print(f"[{self.env.now:.2f}]: No available trucks for store {store.store_id}")
+            return
+        
         with self.trucks.request() as request:
             yield request
-            print(f"[{self.env.now:.2f}]: Truck acquired for {store.name}. Beginning delivery...")
             distance = self.distances.get(store.store_id, 0)
             delivery_travel_time = distance/self.truck_speed
+            print(f"[{self.env.now:.2f}]: Truck acquired for {store.name}. Beginning delivery for time {delivery_travel_time}")
             
             yield self.env.timeout(delivery_travel_time/24)
             
             current_date = START_DATE + timedelta(days=int(self.env.now))
             fuel_price = self.get_fuel_price(store.store_id, current_date)
-            delivery_quantity = min(DELIVERY_QUANTITY, store.capacity - store.inventory) # this logic isnt completely sensical either, also some calculation needed probably.
             transport_cost = (TRANSPORT_COST_PER_DELIVERY_BASE +
-                              (distance * (fuel_price * self.fuel_per_km 
-                                           + delivery_quantity * TRANSPORT_COST_PER_UNIT_LOAD_PER_KM )))
+                              (distance * (fuel_price * self.fuel_per_km) +
+                              (distance/2) * (self.truck_capacity * TRANSPORT_COST_PER_UNIT_LOAD_PER_KM )))
             
             
-            store.inventory += delivery_quantity
+            store.inventory += self.truck_capacity
             store.total_transport_cost += transport_cost
             self.total_transport_cost += transport_cost
             
-            # print(f"[{self.env.now:.2f}]: Delivery completed for {store.name}. New inventory: {store.inventory}. Cost: {transport_cost:.2f}")
             yield self.env.timeout(delivery_travel_time/24)
-            # print(f"[{self.env.now:.2f}]: Truck returned to DC from {store.name}.")
 
     def periodic_check_and_order(self):
         while True:
             yield self.env.timeout(DELIVERY_CHECK_INTERVAL)
+            sim_day = int(self.env.now)
+
             print(f"[{self.env.now:.2f}]: DC performing periodic stock check for all stores.")
 
+            store_metrics = []
             for store in self.stores:
-                if self.order_policy == "half" and self.check_if_stock_below_reorder_point(store):
-                    self.env.process(self._execute_delivery(store))
-                if self.order_policy == "model" and self.check_model(store):
-                    self.env.process(self._execute_delivery(store))
+                if (store.capacity - store.inventory < self.truck_capacity):
+                    continue
+                if self.order_policy == "level":
+                    store_metrics.append((store, store.inventory))
+                # if self.order_policy == "distance":
+                #     store_metrics.append((store, self.distances[store.store_id]))
+                # if self.order_policy == "predicted_sales":
+
+            sorted_by_second=sorted(store_metrics, key=lambda tup: tup[1])
+            for store_id, _ in sorted_by_second:
+                self.env.process(self._execute_delivery(store_id))
+
+            for store in self.stores:
+                self.total_storage_cost += store.inventory * STORAGE_COST_PER_UNIT_PER_DAY
+
+            
 
 # -------------------- Simulation Runner --------------------
-def simulate(store_configs, transport_type, order_policy):
+def simulate(store_type, truck_capacities, truck_numbers, order_policy):
     env = simpy.Environment()
-    stores = [Store(env, store_id, storage_type) for store_id, storage_type in store_configs]
-    trucks = simpy.Resource(env, capacity=TRANSPORT_TIERS[transport_type]["trucks"])
-    dc = DistributionCenter(env, stores=stores, trucks=trucks, transport_type=transport_type, order_policy=order_policy) 
+    stores = [Store(env, store_id, store_type) for store_id in range(1,46)]
+    trucks = simpy.Resource(env, capacity=TRUCK_NUMBERS[truck_numbers]["trucks"])
+    dc = DistributionCenter(env, stores=stores, trucks=trucks, capacities=truck_capacities, order_policy=order_policy) 
     env.run(until=SIM_DAYS)
+    
 
     # Reporting
     total_revenue = sum(s.total_revenue for s in stores)
-    total_transport = sum(s.total_transport_cost for s in stores)
-    total_storage = sum(s.total_storage_cost for s in stores)
-    total_rent = sum(s.total_rent_paid for s in stores)
+    total_transport = dc.total_transport_cost
+    total_storage = dc.total_storage_cost
+    store_rent = (len(stores) * STORAGE_TIERS[store_type]["montly_rent"] * SIM_DAYS)/30
+    truck_rent = (TRUCK_NUMBERS[truck_numbers]["trucks"] * TRUCK_CAPACITIES[truck_capacities]["monthly_rent"] * SIM_DAYS) / 30
+    total_rent = store_rent + truck_rent
     total_stockouts = sum(s.total_stockouts for s in stores)
     total_lost_profit = sum(s.lost_profit for s in stores)
 
     final_profit = total_revenue - total_transport - total_storage - total_rent
+    net_profit   = final_profit - total_lost_profit
 
     print(f"--- Simulation Results after {SIM_DAYS} days ---")
     for s in stores:
@@ -331,6 +300,7 @@ def simulate(store_configs, transport_type, order_policy):
     print(f"TOTAL Stockouts: {total_stockouts}")
     print(f"TOTAL Lost Profit: €{total_lost_profit:.2f}")
     print(f"FINAL Profit: €{final_profit:.2f}")
+    print(f"NET Profit: €{net_profit:.2f}")
 
 total_sales_list = {
     'Store1':[],
@@ -338,11 +308,9 @@ total_sales_list = {
     'Store3':[],
 }
 # Example usage: (store_id, storage_type)
-simulate([
-        ("1", "large"),
-        ("2", "large"),
-        ("3", "large"),
-],
+simulate(
+    "small",
     "low",
-    "half"
+    "low",
+    "level"
 )
