@@ -59,29 +59,28 @@ units_lookup = {
 
 # -------------------- Configuration --------------------
 UNIT_SALE_PRICE = 1
-SIM_DAYS = 2  # For full simulation it is 1000 days
-STORAGE_COST_PER_UNIT_PER_DAY = 0.001
+SIM_DAYS = 300  # For full simulation it is 1000 days
+STORAGE_COST_PER_UNIT_PER_DAY = 0.02
 TRANSPORT_COST_PER_DELIVERY_BASE = 100
 TRANSPORT_COST_PER_UNIT_LOAD_PER_KM = 0.00001
 DELIVERY_CHECK_INTERVAL = 1
+BREAKDOWN_PROBABILITY = 0.005
 
 
 # Define storage tiers
 STORAGE_TIERS = {
-    "low":  {"capacity": 10000, "monthly_rent":  5000},
-    "medium": {"capacity": 20000, "monthly_rent":  9000},
-    "high":  {"capacity": 40000, "monthly_rent": 17000},
+    "low":  {"capacity": 15000, "monthly_rent":  15000},
+    "high":  {"capacity": 24000, "monthly_rent": 24000},
 }
 
-
 TRUCK_CAPACITIES = {
-    "low" : {"delivery_quantity": 2000, "monthly_rent": 1000, "truck_gas_consumption": 1 },
-    "high": {"delivery_quantity": 4000, "monthly_rent": 1800, "truck_gas_consumption": 1.7}
+    "low" : {"delivery_quantity": 3000, "monthly_rent": 2000, "truck_gas_consumption": 1 },
+    "high": {"delivery_quantity": 5000, "monthly_rent": 4000, "truck_gas_consumption": 1.8}
 }
 
 TRUCK_NUMBERS = {
-    "low" : {"trucks": 30},
-    "high": {"trucks": 50}
+    "low" : {"trucks": 20},
+    "high": {"trucks": 40}
 }
 
 
@@ -90,7 +89,7 @@ TRUCK_NUMBERS = {
 np.random.seed(42)
 num_elements = 45
 min_km = 50
-max_km = 2000
+max_km = 1000
 mean = (min_km + max_km) / 2
 std_dev = (max_km - min_km) / 6
 raw_distances = np.random.normal(loc=mean, scale=std_dev, size=num_elements)
@@ -127,12 +126,10 @@ class Store:
         self.inventory = int(self.capacity / 2)
         self.total_sales = 0
         self.total_revenue = 0
-        self.total_transport_cost = 0
         self.total_stockouts = 0
         self.lost_profit = 0
-        self.total_storage_cost = 0
-        self.total_rent_paid = 0
         self.last_day_checked = -1
+        self.total_transport_cost = 0
         self.last_week_predicted_sales = None  # for using in subsequent predictions
         self.action = env.process(self.run())
 
@@ -203,13 +200,12 @@ class DistributionCenter:
         self.total_transport_cost = 0
         self.action = env.process(self.periodic_check_and_order())
         self.total_storage_cost = 0
+        self.delivery_in_action = [0 for i in range(46)]
         
-    def check_if_stock_below_reorder_point(self, store):
-        return store.inventory <=0
 
     def get_fuel_price(self, store, current_date):
         week_start = current_date - timedelta(days=current_date.weekday()-4)
-        return arrival_lookup.get((store, week_start), 99999)
+        return fuel_lookup.get((store, week_start), 99999)
     
     def get_weekly_units(self, store, current_date):
         week_start = current_date - timedelta(days=current_date.weekday()-4)
@@ -217,46 +213,61 @@ class DistributionCenter:
 
 
     def _execute_delivery(self, store):
-        if (self.trucks.count >= self.trucks.capacity):
+        if (self.trucks.count >= self.trucks.capacity or self.delivery_in_action[int(store.store_id)]):
             # print(f"[{self.env.now:.2f}]: No available trucks for store {store.store_id}")
             return
         
         with self.trucks.request() as request:
             yield request
+
+
+            self.delivery_in_action[int(store.store_id)] = 1
             distance = self.distances.get(store.store_id, 0)
             delivery_travel_time = distance/self.truck_speed
             # print(f"[{self.env.now:.2f}]: Truck acquired for {store.name}. Beginning delivery for time {delivery_travel_time}")
+
+            breakdown_happened = random.random() < BREAKDOWN_PROBABILITY
+
+            effective_travel_time = delivery_travel_time
+
+            if breakdown_happened:
+                effective_travel_time *= 2
+                # print(f"[{self.env.now:.2f}]: TRUCK BREAKDOWN! Delivery to {store.name} will take twice as long.")
             
-            yield self.env.timeout(delivery_travel_time/24)
+            yield self.env.timeout(effective_travel_time/24)
             
             current_date = START_DATE + timedelta(days=int(self.env.now))
-            fuel_price_per_km = self.get_fuel_price(store.store_id, current_date)/10
+            fuel_price_per_litre = self.get_fuel_price(store.store_id, current_date)/4 # per gallon prices
+            litres_per_km = 0.15
+            fuel_cost = distance * litres_per_km  * fuel_price_per_litre
+            # print("unit trans price", (distance/2) * (self.truck_capacity * TRANSPORT_COST_PER_UNIT_LOAD_PER_KM ))
+            # print("fuel price", fuel_cost)
+            # print("distance", distance)
+            # print("fuel price km", fuel_price_per_litre)
             transport_cost = (TRANSPORT_COST_PER_DELIVERY_BASE +
-                              (distance * (fuel_price_per_km * self.fuel_per_km) +
-                              (distance/2) * (self.truck_capacity * TRANSPORT_COST_PER_UNIT_LOAD_PER_KM )))
+                              fuel_cost + (distance/2) * (self.truck_capacity * TRANSPORT_COST_PER_UNIT_LOAD_PER_KM ))
             
             
             store.inventory += self.truck_capacity
             store.total_transport_cost += transport_cost
             self.total_transport_cost += transport_cost
-            
+            self.delivery_in_action[int(store.store_id)] = 0
+
+            breakdown_happened = random.random() < BREAKDOWN_PROBABILITY
+
+            if breakdown_happened:
+                delivery_travel_time *= 2
             yield self.env.timeout(delivery_travel_time/24)
 
     def periodic_check_and_order(self):
         while True:
             yield self.env.timeout(1)
-            sim_day = int(self.env.now)
-
-            # print(f"[{self.env.now:.2f}]: DC performing periodic stock check for all stores.")
 
             store_metrics = []
             for store in self.stores:
                 if (store.capacity - store.inventory < self.truck_capacity):
                     continue
                 store_metrics.append((store, store.inventory))
-                # if self.order_policy == "distance":
-                #     store_metrics.append((store, self.distances[store.store_id]))
-                # if self.order_policy == "predicted_sales":
 
             sorted_by_second=sorted(store_metrics, key=lambda tup: tup[1])
             for store_id, _ in sorted_by_second:
@@ -295,7 +306,7 @@ def simulate(store_type, truck_capacities, truck_numbers):
     #           f"Revenue: {s.total_revenue:.2f}, Stockouts: {s.total_stockouts}, "
     #           f"Lost Profit: {s.lost_profit:.2f}, Transport: {s.total_transport_cost}, "
     #           f"Storage Cost: {s.total_storage_cost:.2f}, Rent Paid: {s.total_rent_paid}")
-
+    print("config: store capacity", store_type, ",truck capacity", truck_capacities, ",truck_numbers", truck_numbers )
     print(f"\nTOTAL Revenue: €{total_revenue:.2f}")
     print(f"TOTAL Transport Cost: €{total_transport:.2f}")
     print(f"TOTAL Storage Cost: €{total_storage:.2f}")
@@ -308,21 +319,22 @@ def simulate(store_type, truck_capacities, truck_numbers):
     return final_profit
 
 
-simulate(
-    "low",   #store capacity
-    "high",  #truck capacities
-    "low",   #truck numbers
-)
+# simulate(
+#     "low",   #store capacity
+#     "high",  #truck capacities
+#     "low",   #truck numbers
+# )
 
 options = ["low", "high"]
-results = {}
+results = {}    
 
 for j in range(2):
     for k in range(2):
         for l in range(2):
             opt_combo = (options[j], options[k], options[l])
+            print(opt_combo)
             trials = []
-            for i in range(15):
+            for i in range(1):
                 result = simulate(*opt_combo)
                 trials.append(result)
             results[opt_combo] = trials
