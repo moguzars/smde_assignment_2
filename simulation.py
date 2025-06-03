@@ -12,26 +12,25 @@ sales_df["Store"] = sales_df["Store"].astype(str)
 
 # -------------------- MLP coefficientsicients from R --------------------
 coefficients = {
-    'intercept': 6.210e+05,
-    'Holiday_Flag': 1.803e+04,
-    'Temperature': -455.2,
-    'Fuel_Price': -27860.0,
-    'CPI': 2804.0,
-    'Unemployment': -18150.0,
-    'Last_Week_Sales': 0.378,
+    'intercept': 13.47,
+    'Holiday_Flag': 0.02112,
+    'Temperature': -2.251e-05,
+    'Fuel_Price': -0.02168,
+    'CPI': 0.002658,
+    'Unemployment': -0.01612,
+    'Last_Week_Sales': 2.605e-07,
 
-    # Store-specific coefficientsicients
-    'Store2': 234600.0, 'Store3': -732800.0, 'Store4': 546000.0, 'Store5': -794300.0,
-    'Store6': -11220.0, 'Store7': -544600.0, 'Store8': -442400.0, 'Store9': -666400.0,
-    'Store10': 491500.0, 'Store11': -137600.0, 'Store12': 20780.0, 'Store13': 506900.0,
-    'Store14': 411100.0, 'Store15': -342800.0, 'Store16': -613300.0, 'Store17': -198100.0,
-    'Store18': -44100.0, 'Store19': 168400.0, 'Store20': 357500.0, 'Store21': -490200.0,
-    'Store22': -102600.0, 'Store23': 66870.0, 'Store24': 119100.0, 'Store25': -514900.0,
-    'Store26': -120600.0, 'Store27': 368600.0, 'Store28': 217000.0, 'Store29': -364700.0,
-    'Store30': -691900.0, 'Store31': -94760.0, 'Store32': -169300.0, 'Store33': -530800.0,
-    'Store34': -83710.0, 'Store35': -158800.0, 'Store36': -719700.0, 'Store37': -633800.0,
-    'Store38': -371900.0, 'Store39': -62090.0, 'Store40': -197300.0, 'Store41': -143600.0,
-    'Store42': -350800.0, 'Store43': -506000.0, 'Store44': -557300.0, 'Store45': -374200.0
+    'Store2': 0.1180,  'Store3': -1.0700,  'Store4': 0.3601,  'Store5': -1.2900,
+    'Store6': -0.01706, 'Store7': -0.6854, 'Store8': -0.4046, 'Store9': -0.8236,
+    'Store10': 0.3595,  'Store11': -0.1015, 'Store12': 0.03990, 'Store13': 0.3568,
+    'Store14': 0.2410,  'Store15': -0.4482, 'Store16': -0.7954, 'Store17': -0.1734,
+    'Store18': -0.00569,'Store19': 0.1809,  'Store20': 0.1744,  'Store21': -0.5098,
+    'Store22': -0.06419,'Store23': 0.09257, 'Store24': 0.1462,  'Store25': -0.5549,
+    'Store26': -0.07622,'Store27': 0.2904,  'Store28': 0.2286,  'Store29': -0.5444,
+    'Store30': -0.9688, 'Store31': -0.06215,'Store32': -0.1137, 'Store33': -1.198,
+    'Store34': -0.05315,'Store35': -0.1515, 'Store36': -1.096,  'Store37': -0.8159,
+    'Store38': -0.7710, 'Store39': -0.04379,'Store40': -0.1546, 'Store41': -0.09145,
+    'Store42': -0.5146, 'Store43': -0.5927, 'Store44': -1.101,  'Store45': -0.3842
 }
 
 
@@ -58,8 +57,8 @@ units_lookup = {
 }
 
 # -------------------- Configuration --------------------
-UNIT_SALE_PRICE = 1
-SIM_DAYS = 300  # For full simulation it is 1000 days
+UNIT_SALE_PRICE = 10    
+SIM_DAYS = 100  # For full simulation it is 1000 days
 STORAGE_COST_PER_UNIT_PER_DAY = 0.02
 TRANSPORT_COST_PER_DELIVERY_BASE = 100
 TRANSPORT_COST_PER_UNIT_LOAD_PER_KM = 0.00001
@@ -334,7 +333,7 @@ for j in range(2):
             opt_combo = (options[j], options[k], options[l])
             print(opt_combo)
             trials = []
-            for i in range(1):
+            for i in range(15):
                 result = simulate(*opt_combo)
                 trials.append(result)
             results[opt_combo] = trials
