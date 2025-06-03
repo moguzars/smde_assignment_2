@@ -1,3 +1,5 @@
+import math
+
 import simpy
 import pandas as pd
 import numpy as np
@@ -101,13 +103,15 @@ STORE_DISTANCES_FROM_DC = {
 def predict_weekly_sales(store_id, holiday_flag, temperature, fuel_price, cpi, unemployment, last_week_sales):
     intercept = coefficients['intercept']
     store_coef = coefficients.get(f'Store{store_id}', 0)
-    return intercept + store_coef + \
+    log_prediction=intercept + store_coef + \
            coefficients['Holiday_Flag'] * holiday_flag + \
            coefficients['Temperature'] * temperature + \
            coefficients['Fuel_Price'] * fuel_price + \
            coefficients['CPI'] * cpi + \
            coefficients['Unemployment'] * unemployment + \
            coefficients['Last_Week_Sales'] * last_week_sales
+    prediction= math.exp(log_prediction)
+    return prediction
 
 # -------------------- Store Class --------------------
 class Store:

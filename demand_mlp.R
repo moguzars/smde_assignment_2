@@ -1,7 +1,6 @@
 library(readr)
 library(dplyr)
 
-
 # Load and preprocess data
 data <- read_csv("Walmart_Sales.csv")
 data$Date <- as.Date(data$Date, format = "%d-%m-%Y")
@@ -27,14 +26,15 @@ train_data$Store <- as.factor(train_data$Store)
 test_data$Store <- as.factor(test_data$Store)
 
 # Train model with lag feature and Store
-model <- lm(Weekly_Sales ~ Store + Holiday_Flag + Temperature + Fuel_Price + CPI + Unemployment + Last_Week_Sales,
+model <- lm(log(Weekly_Sales) ~ Store + Holiday_Flag + Temperature + Fuel_Price + CPI + Unemployment + Last_Week_Sales,
             data = train_data)
 
 # Summary of model
 summary(model)
 
 # Predict on test set
-predictions <- predict(model, newdata = test_data)
+log_predictions <- predict(model, newdata = test_data)
+predictions <- exp(log_predictions)
 
 # RMSE
 rmse <- sqrt(mean((predictions - test_data$Weekly_Sales)^2))
@@ -47,3 +47,14 @@ r_squared <- 1 - (ss_res / ss_tot)
 # Print performance
 cat("Test RMSE:", rmse, "\n")
 cat("Test R-squared:", r_squared, "\n")
+
+# Residual diagnostics
+residuals <- residuals(model)
+
+# Plot histogram of residuals
+hist(residuals, breaks = 30, main = "Histogram of Residuals", xlab = "Residuals")
+
+# QQ plot of residuals
+qqnorm(residuals)
+qqline(residuals, col = "red")
+
