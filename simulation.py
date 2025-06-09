@@ -71,7 +71,7 @@ BREAKDOWN_PROBABILITY = 0.005
 # Define storage tiers
 STORAGE_TIERS = {
     "low":  {"capacity": 15000, "monthly_rent":  15000},
-    "high":  {"capacity": 24000, "monthly_rent": 24000},
+    "high":  {"capacity": 30000, "monthly_rent": 24000},
 }
 
 TRUCK_CAPACITIES = {
@@ -80,8 +80,8 @@ TRUCK_CAPACITIES = {
 }
 
 TRUCK_NUMBERS = {
-    "low" : {"trucks": 20},
-    "high": {"trucks": 40}
+    "low" : {"trucks": 15},
+    "high": {"trucks": 35}
 }
 
 
