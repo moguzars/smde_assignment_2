@@ -28,7 +28,8 @@ test_data$Store <- as.factor(test_data$Store)
 # Train model with lag feature and Store
 model <- lm(log(Weekly_Sales) ~ Store + Holiday_Flag + Temperature + Fuel_Price + CPI + Unemployment + Last_Week_Sales,
             data = train_data)
-
+hist(log(data$Weekly_Sales))
+qqline(log(data$Weekly_Sales), col = "red")
 # Summary of model
 summary(model)
 
